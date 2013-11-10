@@ -1,8 +1,10 @@
 package com.norcode.bukkit.portablehorses;
 
-import net.h31ix.updater.Updater;
+import net.gravitydevelopment.updater.Updater;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventPriority;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
+import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerPickupItemEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.Location;
@@ -43,6 +45,8 @@ public class PortableHorses extends JavaPlugin implements Listener {
     private boolean allowNestedSaddles = false;
     private boolean requireSpecialSaddle = false;
     private boolean craftSpecialSaddle = false;
+    private boolean allowSaddleRemoval = true;
+
     private Random random = new Random();
     private HashMap<String, HashMap<Long, List<String>>> loreStorage = new HashMap<String, HashMap<Long, List<String>>>();
     private ShapedRecipe specialSaddleRecipe;
@@ -110,6 +114,8 @@ public class PortableHorses extends JavaPlugin implements Listener {
         this.allowNestedSaddles = getConfig().getBoolean("allow-nested-saddles", false);
         this.requireSpecialSaddle = getConfig().getBoolean("require-special-saddle", false);
         this.craftSpecialSaddle = getConfig().getBoolean("craft-special-saddle", false);
+        this.allowSaddleRemoval = getConfig().getBoolean("allow-saddle-removal", true);
+
         // Add or remove the crafting recipe for the special saddle as necessary.
         boolean found = false;
         Iterator<Recipe> it = getServer().recipeIterator();
@@ -133,11 +139,11 @@ public class PortableHorses extends JavaPlugin implements Listener {
     public void doUpdater() {
         String autoUpdate = getConfig().getString("auto-update", "notify-only").toLowerCase();
         if (autoUpdate.equals("true")) {
-            updater = new Updater(this, "portable-horses", this.getFile(), Updater.UpdateType.DEFAULT, true);
+            updater = new Updater(this, 64321, this.getFile(), Updater.UpdateType.DEFAULT, true);
         } else if (autoUpdate.equals("false")) {
             getLogger().info("Auto-updater is disabled.  Skipping check.");
         } else {
-            updater = new Updater(this, "portable-horses", this.getFile(), Updater.UpdateType.NO_DOWNLOAD, true);
+            updater = new Updater(this, 64321, this.getFile(), Updater.UpdateType.NO_DOWNLOAD, true);
         }
     }
 
@@ -147,11 +153,36 @@ public class PortableHorses extends JavaPlugin implements Listener {
         }
     }
 
+    @EventHandler
+    public void onClickHorse(EntityDamageByEntityEvent event) {
+        if (!allowSaddleRemoval) return;
+        if (event.getDamager() instanceof Player) {
+            if (event.getEntity() instanceof Horse) {
+                Player p = (Player) event.getDamager();
+                if (p.isSneaking()) {
+                    event.setCancelled(true);
+                    Horse h = (Horse) event.getEntity();
+                    if (isPortableHorseSaddle(h.getInventory().getSaddle())) {
+                        // Remove the saddle and 'disenchant' it.
+                        h.getInventory().setSaddle(null);
+                        h.getWorld().dropItem(h.getLocation(), new ItemStack(getEmptyPortableHorseSaddle()));
+                    }
+                }
+            }
+        }
+    }
+
     @EventHandler(priority= EventPriority.NORMAL, ignoreCancelled = true)
     public void onSaddleEvent(final InventoryClickEvent event) {
 
         if (!(event.getInventory() instanceof HorseInventory)) return;
         Horse horse = ((Horse) event.getInventory().getHolder());
+        if (debugMode) {
+            debug("Inventory Action:" + event.getAction());
+            debug("Cursor:" + event.getCursor());
+            debug("CurrentItem:" + event.getCurrentItem());
+            debug("Click:" + event.getClick());
+        }
         if (event.isShiftClick()) {
             if (event.getRawSlot() != 0) {
                 if (isPortableHorseSaddle(event.getCurrentItem())) {
@@ -182,11 +213,6 @@ public class PortableHorses extends JavaPlugin implements Listener {
                     event.getAction() == InventoryAction.HOTBAR_MOVE_AND_READD) &&
                     event.getRawSlot() == 0 && isPortableHorseSaddle(event.getCurrentItem())) {
             onUnsaddled(event, horse, event.getCurrentItem());
-        } else if (debugMode) {
-            debug("Inventory Action:" + event.getAction());
-            debug("Cursor:" + event.getCursor());
-            debug("CurrentItem:" + event.getCurrentItem());
-            debug("Click:" + event.getClick());
         }
     }
 
@@ -269,6 +295,9 @@ public class PortableHorses extends JavaPlugin implements Listener {
     }
 
     private boolean isEmptyPortableHorseSaddle(ItemStack currentItem) {
+        if (currentItem.getType() != Material.SADDLE) {
+            return false;
+        }
         if (requireSpecialSaddle) {
             if (!currentItem.hasItemMeta()) {
                 return false;
